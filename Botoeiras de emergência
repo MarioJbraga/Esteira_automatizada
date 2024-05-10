@@ -1,0 +1,117 @@
+funcionamento da esteira  para ao pressionar botoeira de emergência ser enviado uma mensagem dessa parada,funcionando como botoeira de emergência:
+
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+
+const char* ssid ="Mario mill grau";          // Nome da rede Wi-Fi
+const char* password = "@Manaus2021";      // Senha da rede Wi-Fi
+const char* mqttServer = "broker.hivemq.com"; // Endereço do servidor MQTT
+const int mqttPort = 1883;                      // Porta do servidor MQTT
+
+const char* ledControlTopic = "esteira-status";    // Tópico MQTT para controle do LED
+const char* irSensorTopic = "ir-sensor";        // Tópico MQTT para o sensor IR
+const char* timeParadaEsteiraTopic = "tempo-parada-esteira";  // Tópico MQTT para envio do tempo de parada da esteira
+const char* irCounterTopic = "ir-contador";    // Tópico MQTT para o contador de obstáculos IR
+
+const int ledPin = 4;       // Pino do LED (D1 no NodeMCU ESP8266)
+const int buttonPin = 5;    // Pino do push button (D2 no NodeMCU ESP8266)
+const int irSensorPin = 14; // Pino do sensor IR LM393 (D5 no NodeMCU ESP8266)
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+bool ledState = LOW;             // Estado atual do LED
+bool lastButtonState = LOW;      // Estado anterior do push button
+bool lastIrSensorState = LOW;    // Estado anterior do sensor IR
+unsigned long startTime = 0;     // Momento em que a esteira é ligada
+unsigned long stopTime = 0;      // Momento em que a esteira é desligada
+unsigned long totalTimeRunning = 0; // Tempo total de funcionamento da esteira (em milissegundos)
+unsigned long totalTimeStopped = 0; // Tempo total de parada da esteira (em milissegundos)
+int obstacleCount = 0;           // Contador de obstáculos encontrados pelo sensor IR durante o funcionamento
+
+void setup() {
+  pinMode(ledPin, OUTPUT);
+  pinMode(buttonPin, INPUT_PULLUP);
+  pinMode(irSensorPin, INPUT_PULLUP);
+  
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);     // Conecta-se à rede Wi-Fi
+  
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Conectando à rede Wi-Fi...");
+  }
+  
+  Serial.println("Conectado à rede Wi-Fi");
+  
+  client.setServer(mqttServer, mqttPort);
+  
+  while (!client.connected()) {
+    if (client.connect("arduino-client")) {
+      Serial.println("Conectado ao broker MQTT");
+    } else {
+      Serial.print("Falha ao conectar ao broker MQTT - Código de erro: ");
+      Serial.println(client.state());
+      delay(2000);
+    }
+  }
+  
+  client.publish(ledControlTopic, "LED control initialized");
+}
+
+void loop() {
+  bool buttonState = digitalRead(buttonPin);
+  bool irSensorState = digitalRead(irSensorPin);
+  
+  if (buttonState != lastButtonState) {
+    delay(50); // Debounce do botão
+    if (buttonState == HIGH) {
+      // Botão pressionado
+      ledState = !ledState;
+      digitalWrite(ledPin, ledState);
+
+      if (ledState == HIGH) {
+        startTime = millis(); // Inicia a contagem de tempo da esteira ligada
+        if (totalTimeStopped > 0) {
+          unsigned long totalStopTimeInSeconds = totalTimeStopped / 1000;
+          char timeStoppedMessage[50];
+          sprintf(timeStoppedMessage, "Esteira parada por tempo total de %lu segundos", totalStopTimeInSeconds);
+          client.publish(timeParadaEsteiraTopic, timeStoppedMessage); // Envia a mensagem de parada com o tempo para o tópico "tempo-parada-esteira"
+        }
+        totalTimeStopped = 0; // Zera o tempo total de parada após a retomada
+        client.publish(ledControlTopic, "Esteira iniciada");
+      } else {
+        stopTime = millis(); // Finaliza a contagem de tempo da esteira desligada
+        totalTimeRunning += (stopTime - startTime);
+        unsigned long totalTimeRunningInSeconds = totalTimeRunning / 1000;
+        char timeStoppedMessage[50];
+        sprintf(timeStoppedMessage, "Esteira parada por tempo %lu segundos", totalTimeRunningInSeconds);
+        client.publish(timeParadaEsteiraTopic, timeStoppedMessage); // Envia a mensagem de parada com o tempo para o tópico "tempo-parada-esteira"
+        client.publish(ledControlTopic, "Esteira parada");
+      }
+    }
+    
+    lastButtonState = buttonState;
+  }
+  
+  if (irSensorState != lastIrSensorState) {
+    delay(50); // Debounce do sensor IR
+    if (irSensorState == LOW) {
+      // Objeto detectado pelo sensor IR
+      client.publish(irSensorTopic, "Obstáculo encontrado");
+      if (ledState == HIGH) {
+        obstacleCount++;
+        char obstacleCountMessage[50];
+        sprintf(obstacleCountMessage, "Obstáculos durante o funcionamento: %d", obstacleCount);
+        client.publish(irCounterTopic, obstacleCountMessage); // Envia o contador para o tópico "IR-contador"
+      }
+    } else {
+      // Nenhum objeto detectado pelo sensor IR
+      client.publish(irSensorTopic, "Nenhum obstáculo");
+    }
+    
+    lastIrSensorState = irSensorState;
+  }
+  
+  client.loop();
+}
