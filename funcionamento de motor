@@ -1,0 +1,66 @@
+Para o funcionamento do motor de passo para ser controlado a partir das botoeiras, segue código : 
+ #include <AccelStepper.h>  // Inclui a biblioteca AccelStepper para controle do motor de passo
+
+  const int passosPorRevolucao = 320; // Substitua pelo número correto de passos por revolução do motor , 320
+  const int potPin = A0; // Pino do potenciômetro para controle de velocidade
+  const int chavePrincipalPin = 6; // Pino da chave de ligar/desligar
+
+  AccelStepper motor(1, 2, 3); // Cria um objeto AccelStepper para controlar o motor de passo
+
+  boolean ledOn = false; // Variável para controlar o estado do LED
+  boolean chavePrincipalState = false; // Variável para armazenar o estado da chave principal
+  boolean lastChavePrincipalState = false; // Variável para armazenar o estado anterior da chave principal
+  boolean esteiraLigada = false; // Variável para indicar se a esteira está ligada
+
+  void setup() 
+{
+    pinMode(chavePrincipalPin, INPUT_PULLUP); // Define o pino da chave principal como entrada com pull-up interno
+    pinMode(4, OUTPUT); // Define o pino 4 como saída para controle do motor
+    digitalWrite(4, HIGH); // Desliga o motor inicialmente
+    motor.setMaxSpeed(1000); // Define a velocidade máxima do motor de passo
+    Serial.begin(9600); // Inicializa a comunicação serial para monitoramento
+}
+  void loop() 
+{
+    int leituraSensor = analogRead(potPin); // Lê o valor do potenciômetro
+    int velocidadeMotor = map(leituraSensor, 0, 1023, 0, 100); // Mapeia o valor do potenciômetro para a velocidade
+  chavePrincipalState = digitalRead(chavePrincipalPin); // Lê o estado da chave principal
+    if (chavePrincipalState == LOW && lastChavePrincipalState == HIGH) 
+    {
+      ledOn = !ledOn; // Inverte o estado do LED
+      digitalWrite(4, ledOn ? LOW : HIGH); // Liga ou desliga o motor com base no estado do LED
+        if (ledOn) 
+          {
+            Serial.println("Esteira Ligada na chave principal");
+            esteiraLigada = true; // Indica que a esteira foi ligada
+          } 
+        else 
+          {
+            Serial.println("Esteira Desligada na chave principal");
+            esteiraLigada = false; // Indica que a esteira foi desligada
+          }
+    }
+  lastChavePrincipalState = chavePrincipalState; // Armazena o estado atual da chave principal
+    if (esteiraLigada) 
+      {
+        int rpmDesejada = map(velocidadeMotor, 0, 100, 0, 100); // Mapeia a velocidade desejada em termos de RPM
+        int passosPorSegundo = rpmDesejada * passosPorRevolucao / 60; // Calcula os passos por segundo
+        motor.setSpeed(passosPorSegundo); // Define a velocidade do motor
+        motor.runSpeed(); // Executa o motor de acordo com a velocidade definida
+
+        unsigned long tempoAtual = millis();
+        static unsigned long ultimoTempoSerial = 0;
+            if (tempoAtual - ultimoTempoSerial >= 1000) 
+              {
+                ultimoTempoSerial = tempoAtual;
+                Serial.print("Velocidade da esteira em ");
+                Serial.print(rpmDesejada);
+                Serial.println("%");
+              }
+      } 
+    else 
+      {
+        motor.setSpeed(0); // Define a velocidade do motor como zero se a esteira estiver desligada
+        motor.runSpeed(); // Para o motor
+      }
+}
